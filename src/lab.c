@@ -61,6 +61,21 @@ queue_t queue_init(int capacity) {
 }
 
 /**
+ * @brief Internal helper function to handle shutdown signaling.
+ *        Sets the shutdown flag and broadcasts to both condition variables
+ *        to ensure all waiting producer and consumer threads are woken up.
+ *
+ * @param q The queue to signal shutdown on.
+ */
+static void signal_shutdown(queue_t q) {
+    // Set shutdown flag to true so waiting threads can know to exit.
+    q->shutdown = true;
+    // Wake up all threads waiting on not_full (producers) and not_empty (consumers).
+    pthread_cond_broadcast(&q->not_full);
+    pthread_cond_broadcast(&q->not_empty);
+}
+
+/**
  * @brief Frees all resources associated with the queue.
  *        Should signal all waiting threads so they can exit properly.
  *
@@ -73,11 +88,8 @@ void queue_destroy(queue_t q) {
     }
     // Lock the mutex to safely update shared data.
     pthread_mutex_lock(&q->lock);
-    // Set shutdown flag to true so waiting threads can know to exit.
-    q->shutdown = true;
-    // Wake up all threads waiting on not_full (producers) and not_empty (consumers).
-    pthread_cond_broadcast(&q->not_full);
-    pthread_cond_broadcast(&q->not_empty);
+    // Signal shutdown
+    signal_shutdown(q);
     // Unlock the mutex after setting shutdown and signaling condition variables.
     pthread_mutex_unlock(&q->lock);
     // Destroy the mutex and condition variables now that no threads should be waiting.
@@ -169,11 +181,8 @@ void queue_shutdown(queue_t q) {
     }
     // Lock the mutex to safely update shared data.
     pthread_mutex_lock(&q->lock);
-    // Set shutdown flag to true.
-    q->shutdown = true;
-    // Wake up all producers waiting on not_full and all consumers waiting on not_empty.
-    pthread_cond_broadcast(&q->not_full);
-    pthread_cond_broadcast(&q->not_empty);
+    // Signal shutdown
+    signal_shutdown(q);
     // Unlock the mutex after updating the shutdown flag and signaling threads.
     pthread_mutex_unlock(&q->lock);
 }
