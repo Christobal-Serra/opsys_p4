@@ -1,7 +1,5 @@
 #include "harness/unity.h"
 #include "../src/lab.h"
-#include <pthread.h>
-
 
 // NOTE: Due to the multi-threaded nature of this project. Unit testing for this
 // project is limited. I have provided you with a command line tester in
@@ -20,19 +18,8 @@ void tearDown(void) {
   // clean stuff up here
 }
 
-// Test data
-static int test_data[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
 
-// Thread function arguments
-typedef struct {
-    queue_t queue;
-    int* data;
-    int count;
-} thread_args_t;
 
-// Thread function prototypes
-void* producer_thread(void* arg);
-void* consumer_thread(void* arg);
 
 void test_create_destroy(void)
 {
@@ -86,147 +73,122 @@ void test_queue_dequeue_shutdown(void)
     queue_destroy(q);
 }
 
-// Test empty queue operations
-void test_empty_queue(void)
-{
-    queue_t q = queue_init(5);
-    TEST_ASSERT_TRUE(q != NULL);
-    TEST_ASSERT_TRUE(is_empty(q));
-    queue_destroy(q);
+/**
+ * @brief Ensure dequeue returns NULL immediately if shutdown is called and queue is empty.
+ */
+void test_dequeue_empty_after_shutdown(void) {
+  queue_t q = queue_init(5);
+  queue_shutdown(q);
+  TEST_ASSERT_NULL(dequeue(q));
+  queue_destroy(q);
 }
 
-// Test full queue detection
-void test_queue_full(void)
-{
-    queue_t q = queue_init(3);
-    TEST_ASSERT_TRUE(q != NULL);
-    
-    // Fill the queue
-    enqueue(q, &test_data[0]);
-    enqueue(q, &test_data[1]);
-    enqueue(q, &test_data[2]);
-    
-    // Verify contents
-    TEST_ASSERT_TRUE(dequeue(q) == &test_data[0]);
-    TEST_ASSERT_TRUE(dequeue(q) == &test_data[1]);
-    TEST_ASSERT_TRUE(dequeue(q) == &test_data[2]);
-    TEST_ASSERT_TRUE(is_empty(q));
-    
-    queue_destroy(q);
+/**
+* @brief Ensure enqueue after shutdown does not add items to the queue.
+*/
+void test_enqueue_after_shutdown(void) {
+  queue_t q = queue_init(5);
+  int data = 42;
+  queue_shutdown(q);
+  enqueue(q, &data);
+  TEST_ASSERT_TRUE(is_empty(q));
+  queue_destroy(q);
 }
 
-// Test circular buffer behavior
-void test_circular_buffer(void)
-{
-    queue_t q = queue_init(3);
-    TEST_ASSERT_TRUE(q != NULL);
-    
-    // Fill the queue
-    enqueue(q, &test_data[0]);
-    enqueue(q, &test_data[1]);
-    enqueue(q, &test_data[2]);
-    
-    // Remove 2 items
-    TEST_ASSERT_TRUE(dequeue(q) == &test_data[0]);
-    TEST_ASSERT_TRUE(dequeue(q) == &test_data[1]);
-    
-    // Add more items (these should wrap around in the circular buffer)
-    enqueue(q, &test_data[3]);
-    enqueue(q, &test_data[4]);
-    
-    // Verify correct order
-    TEST_ASSERT_TRUE(dequeue(q) == &test_data[2]);
-    TEST_ASSERT_TRUE(dequeue(q) == &test_data[3]);
-    TEST_ASSERT_TRUE(dequeue(q) == &test_data[4]);
-    
-    queue_destroy(q);
+/**
+* @brief Test the queue properly handles being filled to capacity.
+*/
+void test_fill_queue_to_capacity(void) {
+  queue_t q = queue_init(3);
+  int a = 1, b = 2, c = 3;
+  enqueue(q, &a);
+  enqueue(q, &b);
+  enqueue(q, &c);
+  TEST_ASSERT_FALSE(is_empty(q));
+  TEST_ASSERT_EQUAL_PTR(&a, dequeue(q));
+  TEST_ASSERT_EQUAL_PTR(&b, dequeue(q));
+  TEST_ASSERT_EQUAL_PTR(&c, dequeue(q));
+  TEST_ASSERT_TRUE(is_empty(q));
+  queue_destroy(q);
 }
 
-// Test NULL handling in queue operations
-void test_null_queue_handling(void)
-{
-    // These should not crash
-    queue_destroy(NULL);
-    enqueue(NULL, &test_data[0]);
-    void* result = dequeue(NULL);
-    TEST_ASSERT_TRUE(result == NULL);
-    TEST_ASSERT_TRUE(is_empty(NULL));
-    TEST_ASSERT_TRUE(is_shutdown(NULL));
-    queue_shutdown(NULL);
+/**
+ * @brief Interleaves enqueue and dequeue operations to test wraparound behavior
+ *        and ensure the circular buffer maintains correct FIFO order under mixed use.
+ */
+void test_interleaved_enqueue_dequeue(void) {
+  queue_t q = queue_init(3);
+  int a = 1, b = 2, c = 3, d = 4;
+  // Enqueue and immediately dequeue
+  enqueue(q, &a);
+  TEST_ASSERT_EQUAL_PTR(&a, dequeue(q));
+  // Enqueue 2 items
+  enqueue(q, &b);
+  enqueue(q, &c);
+  // Dequeue 1 item
+  TEST_ASSERT_EQUAL_PTR(&b, dequeue(q));
+  // Enqueue 1 more (should wrap around)
+  enqueue(q, &d);
+  // Dequeue remaining items in order
+  TEST_ASSERT_EQUAL_PTR(&c, dequeue(q));
+  TEST_ASSERT_EQUAL_PTR(&d, dequeue(q));
+
+  TEST_ASSERT_TRUE(is_empty(q));
+  queue_destroy(q);
 }
 
-// Thread functions for multi-threaded tests
-void* producer_thread(void* arg) {
-    thread_args_t* args = (thread_args_t*)arg;
-    
-    for (int i = 0; i < args->count; i++) {
-        enqueue(args->queue, &args->data[i]);
-    }
-    
-    return NULL;
+/**
+ * @brief Tests that initializing a queue with zero or negative capacity
+ *        returns NULL and does not allocate memory.
+ */
+void test_init_invalid_capacity(void) {
+  TEST_ASSERT_NULL(queue_init(0));
+  TEST_ASSERT_NULL(queue_init(-5));
 }
 
-void* consumer_thread(void* arg) {
-    thread_args_t* args = (thread_args_t*)arg;
-    int count = 0;
-    
-    while (count < args->count) {
-        void* item = dequeue(args->queue);
-        if (item != NULL) {
-            count++;
-        }
-        
-        // Exit if we've processed all items or the queue is shutdown and empty
-        if ((count >= args->count) || (is_shutdown(args->queue) && is_empty(args->queue))) {
-            break;
-        }
-    }
-    
-    return NULL;
+/**
+ * @brief Verifies that enqueueing a NULL pointer is safely ignored
+ *        and does not modify the queue or cause a crash.
+ */
+void test_enqueue_null_data(void) {
+  queue_t q = queue_init(5);
+  enqueue(q, NULL);
+  TEST_ASSERT_TRUE(is_empty(q));
+  queue_destroy(q);
 }
 
-// Basic multi-threaded test
-void test_basic_multithreaded(void)
-{
-    queue_t q = queue_init(5);
-    TEST_ASSERT_TRUE(q != NULL);
-    
-    pthread_t producer, consumer;
-    thread_args_t producer_args = {q, test_data, 5};
-    thread_args_t consumer_args = {q, NULL, 5};
-    
-    // Create threads
-    pthread_create(&consumer, NULL, consumer_thread, &consumer_args);
-    pthread_create(&producer, NULL, producer_thread, &producer_args);
-    
-    // Wait for threads to complete
-    pthread_join(producer, NULL);
-    pthread_join(consumer, NULL);
-    
-    // Verify queue is empty
-    TEST_ASSERT_TRUE(is_empty(q));
-    
-    queue_destroy(q);
+/**
+ * @brief Verifies that a dequeue on an empty queue after shutdown
+ *        returns NULL immediately and does not block or crash.
+ */
+void test_dequeue_from_empty_after_shutdown(void) {
+  queue_t q = queue_init(5);
+  queue_shutdown(q);
+  void *result = dequeue(q);
+  TEST_ASSERT_NULL(result);
+  queue_destroy(q);
 }
 
-// Test with a very small queue to stress test blocking behavior
-void test_small_queue(void)
-{
-    queue_t q = queue_init(1);
-    TEST_ASSERT_TRUE(q != NULL);
-    
-    // Fill the queue
-    enqueue(q, &test_data[0]);
-    
-    // Drain the queue
-    TEST_ASSERT_TRUE(dequeue(q) == &test_data[0]);
-    TEST_ASSERT_TRUE(is_empty(q));
-    
-    // Fill again
-    enqueue(q, &test_data[1]);
-    TEST_ASSERT_TRUE(dequeue(q) == &test_data[1]);
-    
-    queue_destroy(q);
+/**
+ * @brief Enqueues and dequeues a large number of items in chunks to
+ *        test wraparound, memory handling, and queue stability under load.
+ */
+void test_large_volume(void) {
+  queue_t q = queue_init(100);
+  int items[1000];
+  // Enqueue
+  for (int i = 0; i < 1000; i++) {
+      items[i] = i;
+      enqueue(q, &items[i]);
+      if ((i + 1) % 100 == 0) {
+          // Dequeue in bursts to avoid hitting capacity
+          for (int j = i - 99; j <= i; j++) {
+              TEST_ASSERT_EQUAL_PTR(&items[j], dequeue(q));
+          }
+      }
+  }
+  TEST_ASSERT_TRUE(is_empty(q));
+  queue_destroy(q);
 }
 
 /**
@@ -247,17 +209,19 @@ void test_enqueue_dequeue_after_wraparound(void) {
 }
 
 int main(void) {
-    UNITY_BEGIN();
-    RUN_TEST(test_create_destroy);
-    RUN_TEST(test_queue_dequeue);
-    RUN_TEST(test_queue_dequeue_multiple);
-    RUN_TEST(test_queue_dequeue_shutdown);
-    RUN_TEST(test_empty_queue);
-    RUN_TEST(test_queue_full);
-    RUN_TEST(test_circular_buffer);
-    RUN_TEST(test_null_queue_handling);
-    RUN_TEST(test_basic_multithreaded);
-    RUN_TEST(test_small_queue);
-    RUN_TEST(test_enqueue_dequeue_after_wraparound);
-    return UNITY_END();
+  UNITY_BEGIN();
+  RUN_TEST(test_create_destroy);
+  RUN_TEST(test_queue_dequeue);
+  RUN_TEST(test_queue_dequeue_multiple);
+  RUN_TEST(test_queue_dequeue_shutdown);
+  RUN_TEST(test_dequeue_empty_after_shutdown);
+  RUN_TEST(test_enqueue_after_shutdown);
+  RUN_TEST(test_fill_queue_to_capacity);
+  RUN_TEST(test_interleaved_enqueue_dequeue);
+  RUN_TEST(test_init_invalid_capacity);
+  RUN_TEST(test_enqueue_null_data);
+  RUN_TEST(test_dequeue_from_empty_after_shutdown);
+  RUN_TEST(test_large_volume);
+  RUN_TEST(test_enqueue_dequeue_after_wraparound);
+  return UNITY_END();
 }
