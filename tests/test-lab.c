@@ -208,6 +208,17 @@ void test_enqueue_dequeue_after_wraparound(void) {
     queue_destroy(q);
 }
 
+#include <pthread.h>
+
+/**
+ * @brief Stress test with multiple producers and consumers.
+ *        Validates no deadlocks under heavy load and shutdown.
+ */
+void test_stress_multithreaded(void) {
+    // TODO
+}
+
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_create_destroy);
@@ -223,5 +234,6 @@ int main(void) {
   RUN_TEST(test_dequeue_from_empty_after_shutdown);
   RUN_TEST(test_large_volume);
   RUN_TEST(test_enqueue_dequeue_after_wraparound);
+  // RUN_TEST(test_stress_multithreaded);
   return UNITY_END();
 }
