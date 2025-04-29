@@ -13,7 +13,7 @@
  * @brief Internal structure for the queue.
  *        Holds the buffer, capacity info, and synchronization primitives.
  */
-struct queue {
+typedef struct queue {
     void **buffer;               // Array of void pointers (the circular buffer)
     int capacity;                // Maximum number of items in the queue
     int count;                   // Current number of items in the queue
@@ -23,7 +23,7 @@ struct queue {
     pthread_mutex_t lock;        // Mutex to protect shared data
     pthread_cond_t not_full;     // Condition variable for producer wait
     pthread_cond_t not_empty;    // Condition variable for consumer wait
-};
+} *queue_t;
 
 /**
  * @brief Initializes a new queue with the given capacity.
@@ -37,7 +37,7 @@ queue_t queue_init(int capacity) {
         return NULL;
     }
     // Allocate memory
-    queue_t q = malloc(sizeof(struct queue));
+    queue_t q = malloc(sizeof(*q));
     if (q == NULL) { // Check for allocation failure
         return NULL;  
     }
@@ -128,8 +128,10 @@ void enqueue(queue_t q, void *data) {
     q->buffer[q->tail] = data;
     q->tail = (q->tail+1) % q->capacity; // Wrap around (circular buffer).
     q->count++; // Increase the count of items in the queue.
-    // Signal one waiting consumer (if any) that the queue is no longer empty.
-    pthread_cond_signal(&q->not_empty);
+    // Signal to waiting consumer if the queue was empty before this enqueue,
+    if (q->count == 1) {
+        pthread_cond_signal(&q->not_empty);
+    }
     // Unlock the mutex when done modifying the queue.
     pthread_mutex_unlock(&q->lock);
 }
@@ -162,8 +164,10 @@ void *dequeue(queue_t q) {
     void *data = q->buffer[q->head];
     q->head = (q->head+1) % q->capacity; // Wrap around (circular buffer).
     q->count--; // Decrease the count of items in the queue.
-    // Signal one waiting producer (if any) that the queue is no longer full.
-    pthread_cond_signal(&q->not_full);
+    // Signal to waiting producers if the queue was full before this dequeue,
+    if (q->count == q->capacity - 1) {
+        pthread_cond_signal(&q->not_full);
+    }
     // Unlock the mutex when done modifying the queue.
     pthread_mutex_unlock(&q->lock);
     return data; // Return the dequeued item.
@@ -214,7 +218,7 @@ bool is_empty(queue_t q) {
  */
 bool is_shutdown(queue_t q) {
     if (q == NULL) {
-        return false;
+        return true;
     }
     // Lock the mutex to safely read the shutdown flag.
     pthread_mutex_lock(&q->lock);
